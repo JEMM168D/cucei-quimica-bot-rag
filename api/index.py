@@ -14,6 +14,7 @@ telegram_token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
 
 def send_telegram_message(chat_id, text):
     if not telegram_token:
+        print("Error: TELEGRAM_BOT_TOKEN environment variable is not set.")
         return "Error: TELEGRAM_BOT_TOKEN missing"
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -25,84 +26,35 @@ def send_telegram_message(chat_id, text):
 
 def get_rag_response(user_query: str) -> str:
     if not gemini_key:
-        return "Error: GEMINI_API_KEY not configured."
-
+        return "Error: GEMINI_API_KEY environment variable is not set."
+        
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     ai = genai.Client(api_key=gemini_key)
-
+    
     context_chunks = []
-
-    # 1. ALWAYS load the global curriculum summary (programa_estudios_licenciatura_quimica_cucei.md)
-    #    This guarantees Gemini sees the full plan of studies.
-    try:
-        summary_res = (
-            supabase.table("documents")
-            .select("content, metadata")
-            .eq("metadata->>source", "programa_estudios_licenciatura_quimica_cucei.md")
-            .limit(30) # Fetch ALL chunks of the global summary (it has 21 chunks)
-            .execute()
-        )
-        if summary_res.data:
-            context_chunks.extend(summary_res.data)
-    except Exception as e:
-        print(f"Notice loading global summary: {e}")
-
-    # 2. Try vector embedding search for specific question details
+    
+    # 1. Try vector embedding search
     try:
         embed_res = ai.models.embed_content(
             model="models/gemini-embedding-001",
             contents=user_query
         )
         query_vector = embed_res.embeddings[0].values
-
+        
         rpc_res = supabase.rpc("match_documents", {
             "query_embedding": query_vector,
             "match_count": 5,
             "filter": {}
         }).execute()
-
-        if rpc_res.data:
-            context_chunks.extend(rpc_res.data)
+        
+        context_chunks = rpc_res.data or []
     except Exception as e:
-        print(f"Vector search fallback to multi-keyword search: {e}")
-        # 3. Fallback: search multiple keywords across all subjects
-        stop_words = ["cual", "cuales", "como", "cuando", "donde", "porque", "para", "este", "esta", "estos", "estas", "son", "las", "los", "que", "del", "una", "uno"]
-        keywords = [w.lower().strip('?,.¿¡!') for w in user_query.split() if len(w) > 3 and w.lower() not in stop_words]
-        if not keywords:
-            keywords = ["quimica"]
-
-        seen_sources = set()
-        for kw in keywords[:4]:
-            try:
-                res = (
-                    supabase.table("documents")
-                    .select("content, metadata")
-                    .ilike("content", f"%{kw}%")
-                    .limit(10)
-                    .execute()
-                )
-                if res.data:
-                    for doc in res.data:
-                        src = doc.get('metadata', {}).get('source', '')
-                        if src not in seen_sources and src != "programa_estudios_licenciatura_quimica_cucei.md":
-                            context_chunks.append(doc)
-                            seen_sources.add(src)
-                            if len(context_chunks) >= 40:
-                                break
-            except Exception as inner_e:
-                print(f"Keyword search error for '{kw}': {inner_e}")
-            if len(context_chunks) >= 40:
-                break
-
-    # Deduplicate by content
-    seen_content = set()
-    unique_chunks = []
-    for c in context_chunks:
-        content_key = c.get('content', '')[:100]
-        if content_key not in seen_content:
-            seen_content.add(content_key)
-            unique_chunks.append(c)
-    context_chunks = unique_chunks # Removed the hard limit of 10! Let it use all retrieved chunks
+        print(f"Vector search notice (using fallback text search): {e}")
+        # 2. Fallback to Supabase ILIKE keyword search
+        keywords = [w for w in user_query.split() if len(w) > 3]
+        query_word = keywords[0] if keywords else "quimica"
+        res = supabase.table("documents").select("content, metadata").ilike("content", f"%{query_word}%").limit(5).execute()
+        context_chunks = res.data or []
 
     context_text = "\n\n".join([
         f"--- Fuente: {c.get('metadata', {}).get('source', '')} ---\n{c.get('content', '')}"
@@ -110,58 +62,47 @@ def get_rag_response(user_query: str) -> str:
     ])
 
     prompt = f"""Eres el Asistente Oficial para estudiantes de la Licenciatura en Química de CUCEI (Universidad de Guadalajara - UdeG).
-Tienes acceso al PLAN DE ESTUDIOS COMPLETO DE LA LICENCIATURA EN QUÍMICA DEL CUCEI, el cual incluye todas las materias de la carrera distribuidas en todas las áreas:
-- Química General, Orgánica, Analítica, Inorgánica
-- Fisicoquímica, Electroquímica
-- Bioquímica Estructural
-- Química Ambiental, de Alimentos, Macromolecular, Polímeros
-- Matemáticas (Cálculo, Álgebra Lineal, EDO)
-- Física, Microbiología, Programación
-- Todos los Laboratorios de cada área
-- Talleres de Solución de Problemas (TSM)
+Responde amablemente a la pregunta del estudiante basándote en la información oficial recuperada del plan de estudios.
 
-REGLA DE ORO ESTRICTA: SI LA INFORMACIÓN SOLICITADA NO SE ENCUENTRA EN EL CONTEXTO OFICIAL PROPORCIONADO ABAJO, DEBES RESPONDER "No cuento con esa información" O "Solo puedo responder con base en el plan de estudios proporcionado". BAJO NINGUNA CIRCUNSTANCIA DEBES INVENTAR NOMBRES DE MATERIAS O DATOS.
-
-CONTEXTO OFICIAL RECUPERADO DEL PLAN DE ESTUDIOS CUCEI:
+CONTEXTO OFICIAL CUCEI:
 {context_text}
 
 PREGUNTA DEL ESTUDIANTE:
 {user_query}
 
-RESPUESTA (Amable, clara y profesional para Telegram):"""
+RESPUESTA (Formato amable y bien estructurado para Telegram):"""
 
     try:
         response = ai.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=prompt
         )
         return response.text
     except Exception as e:
-        return f"👋 ¡Hola! Recibí tu consulta. En este momento la API de Gemini está experimentando problemas. Por favor intenta de nuevo en unos momentos."
-
+        return f"👋 ¡Hola! Recibí tu consulta sobre '{user_query}'. En este momento la API de Gemini está reiniciando cuotas. Por favor intenta de nuevo en unos momentos."
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length)
-
+        
         tg_status = "No message processed"
         try:
             update = json.loads(post_data.decode('utf-8'))
             message = update.get("message", {})
             text = message.get("text", "")
             chat_id = message.get("chat_id") or message.get("chat", {}).get("id")
-
+            
             if text and chat_id:
                 if text.startswith("/start"):
-                    welcome = "👋 ¡Hola! Soy el asistente oficial de la Licenciatura en Química de CUCEI.\n\nPuedes preguntarme sobre todas las materias del plan de estudios (más de 90), créditos, prerrequisitos, laboratorios, y las áreas de especialización (Alimentos, Polímeros, Ambiental, etc.)."
+                    welcome = "👋 ¡Hola! Soy el asistente oficial de la Licenciatura en Química de CUCEI.\n\nPuedes preguntarme sobre materias, créditos, prerrequisitos y programas analíticos."
                     tg_status = send_telegram_message(chat_id, welcome)
                 else:
                     bot_reply = get_rag_response(text)
                     tg_status = send_telegram_message(chat_id, bot_reply)
         except Exception as e:
             tg_status = f"Error handling webhook: {e}"
-
+            
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
@@ -171,4 +112,4 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.end_headers()
-        self.wfile.write("Bot RAG CUCEI Quimica - Plan Completo Ingestado - Webhook activo en Vercel".encode('utf-8'))
+        self.wfile.write("Bot RAG CUCEI Telegram Webhook 24/7 activo en Vercel".encode('utf-8'))
