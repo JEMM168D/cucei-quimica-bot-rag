@@ -33,7 +33,7 @@ def get_rag_response(user_query: str) -> str:
     context_chunks = []
 
     # 1. ALWAYS load the global curriculum summary (programa_estudios_licenciatura_quimica_cucei.md)
-    #    This guarantees Gemini sees the full plan of studies (48 courses across all 9 areas).
+    #    This guarantees Gemini sees the full plan of studies.
     try:
         summary_res = (
             supabase.table("documents")
@@ -65,7 +65,7 @@ def get_rag_response(user_query: str) -> str:
             context_chunks.extend(rpc_res.data)
     except Exception as e:
         print(f"Vector search fallback to multi-keyword search: {e}")
-        # 3. Fallback: search multiple keywords across all 48 subjects
+        # 3. Fallback: search multiple keywords across all subjects
         stop_words = ["cual", "cuales", "como", "cuando", "donde", "porque", "para", "este", "esta", "estos", "estas", "son", "las", "los", "que", "del", "una", "uno"]
         keywords = [w.lower().strip('?,.¿¡!') for w in user_query.split() if len(w) > 3 and w.lower() not in stop_words]
         if not keywords:
@@ -110,12 +110,13 @@ def get_rag_response(user_query: str) -> str:
     ])
 
     prompt = f"""Eres el Asistente Oficial para estudiantes de la Licenciatura en Química de CUCEI (Universidad de Guadalajara - UdeG).
-Tienes acceso al PLAN DE ESTUDIOS COMPLETO DE LA LICENCIATURA EN QUÍMICA DEL CUCEI, el cual incluye las 48 materias distribuidas en todas las áreas:
+Tienes acceso al PLAN DE ESTUDIOS COMPLETO DE LA LICENCIATURA EN QUÍMICA DEL CUCEI, el cual incluye todas las materias de la carrera distribuidas en todas las áreas:
 - Química General, Orgánica, Analítica, Inorgánica
 - Fisicoquímica, Electroquímica
 - Bioquímica Estructural
 - Química Ambiental, de Alimentos, Macromolecular, Polímeros
 - Matemáticas (Cálculo, Álgebra Lineal, EDO)
+- Física, Microbiología, Programación
 - Todos los Laboratorios de cada área
 - Talleres de Solución de Problemas (TSM)
 
@@ -153,7 +154,7 @@ class handler(BaseHTTPRequestHandler):
 
             if text and chat_id:
                 if text.startswith("/start"):
-                    welcome = "👋 ¡Hola! Soy el asistente oficial de la Licenciatura en Química de CUCEI.\n\nPuedes preguntarme sobre cualquiera de las 48 materias del plan de estudios, créditos, prerrequisitos, laboratorios, y las áreas de especialización (Alimentos, Polímeros, Ambiental, etc.)."
+                    welcome = "👋 ¡Hola! Soy el asistente oficial de la Licenciatura en Química de CUCEI.\n\nPuedes preguntarme sobre todas las materias del plan de estudios (más de 90), créditos, prerrequisitos, laboratorios, y las áreas de especialización (Alimentos, Polímeros, Ambiental, etc.)."
                     tg_status = send_telegram_message(chat_id, welcome)
                 else:
                     bot_reply = get_rag_response(text)
