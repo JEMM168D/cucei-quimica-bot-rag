@@ -14,7 +14,6 @@ telegram_token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
 
 def send_telegram_message(chat_id, text):
     if not telegram_token:
-        print("Error: TELEGRAM_BOT_TOKEN environment variable is not set.")
         return "Error: TELEGRAM_BOT_TOKEN missing"
     url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -26,14 +25,22 @@ def send_telegram_message(chat_id, text):
 
 def get_rag_response(user_query: str) -> str:
     if not gemini_key:
-        return "Error: GEMINI_API_KEY environment variable is not set."
+        return "Error: GEMINI_API_KEY non-configured."
         
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     ai = genai.Client(api_key=gemini_key)
     
     context_chunks = []
     
-    # 1. Try vector embedding search
+    # 1. Always fetch global curriculum summary for broad major-wide context
+    try:
+        main_summary_res = supabase.table("documents").select("content, metadata").ilike("content", "%programa_estudios_licenciatura_quimica_cucei%").limit(3).execute()
+        if main_summary_res.data:
+            context_chunks.extend(main_summary_res.data)
+    except Exception as e:
+        print("Notice loading main summary:", e)
+
+    # 2. Try vector embedding search for specific question details
     try:
         embed_res = ai.models.embed_content(
             model="models/gemini-embedding-001",
@@ -47,14 +54,16 @@ def get_rag_response(user_query: str) -> str:
             "filter": {}
         }).execute()
         
-        context_chunks = rpc_res.data or []
+        if rpc_res.data:
+            context_chunks.extend(rpc_res.data)
     except Exception as e:
-        print(f"Vector search notice (using fallback text search): {e}")
-        # 2. Fallback to Supabase ILIKE keyword search
+        print(f"Vector search fallback to keyword search: {e}")
+        # 3. Fallback to keyword search across all areas
         keywords = [w for w in user_query.split() if len(w) > 3]
-        query_word = keywords[0] if keywords else "quimica"
-        res = supabase.table("documents").select("content, metadata").ilike("content", f"%{query_word}%").limit(5).execute()
-        context_chunks = res.data or []
+        q_term = keywords[0] if keywords else "quimica"
+        res = supabase.table("documents").select("content, metadata").ilike("content", f"%{q_term}%").limit(4).execute()
+        if res.data:
+            context_chunks.extend(res.data)
 
     context_text = "\n\n".join([
         f"--- Fuente: {c.get('metadata', {}).get('source', '')} ---\n{c.get('content', '')}"
@@ -62,15 +71,15 @@ def get_rag_response(user_query: str) -> str:
     ])
 
     prompt = f"""Eres el Asistente Oficial para estudiantes de la Licenciatura en Química de CUCEI (Universidad de Guadalajara - UdeG).
-Responde amablemente a la pregunta del estudiante basándote en la información oficial recuperada del plan de estudios.
+Responde amablemente a la pregunta del estudiante sobre cualquier área o aspecto del plan de estudios de la carrera de Química en general.
 
-CONTEXTO OFICIAL CUCEI:
+CONTEXTO OFICIAL COMPLETO DEL PLAN DE ESTUDIOS DE QUÍMICA CUCEI:
 {context_text}
 
 PREGUNTA DEL ESTUDIANTE:
 {user_query}
 
-RESPUESTA (Formato amable y bien estructurado para Telegram):"""
+RESPUESTA (Amable, clara y abarcando toda la carrera de Química):"""
 
     try:
         response = ai.models.generate_content(
@@ -79,7 +88,7 @@ RESPUESTA (Formato amable y bien estructurado para Telegram):"""
         )
         return response.text
     except Exception as e:
-        return f"👋 ¡Hola! Recibí tu consulta sobre '{user_query}'. En este momento la API de Gemini está reiniciando cuotas. Por favor intenta de nuevo en unos momentos."
+        return f"👋 ¡Hola! Recibí tu consulta. En este momento la API de Gemini está reiniciando cuotas. Por favor intenta de nuevo en unos momentos."
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -95,7 +104,7 @@ class handler(BaseHTTPRequestHandler):
             
             if text and chat_id:
                 if text.startswith("/start"):
-                    welcome = "👋 ¡Hola! Soy el asistente oficial de la Licenciatura en Química de CUCEI.\n\nPuedes preguntarme sobre materias, créditos, prerrequisitos y programas analíticos."
+                    welcome = "👋 ¡Hola! Soy el asistente oficial de la Licenciatura en Química de CUCEI.\n\nPuedes preguntarme sobre cualquiera de las 9 áreas de la carrera, materias, créditos, prerrequisitos y laboratorios."
                     tg_status = send_telegram_message(chat_id, welcome)
                 else:
                     bot_reply = get_rag_response(text)
