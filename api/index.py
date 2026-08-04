@@ -12,7 +12,6 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "sb_publishable_TOAxsHC8PytOuT2uPj
 gemini_key = os.environ.get('GEMINI_API_KEY', '').strip()
 telegram_token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
 
-
 def send_telegram_message(chat_id, text):
     if not telegram_token:
         return "Error: TELEGRAM_BOT_TOKEN missing"
@@ -23,7 +22,6 @@ def send_telegram_message(chat_id, text):
         return f"Status: {r.status_code}, Body: {r.text}"
     except Exception as e:
         return f"Exception: {e}"
-
 
 def get_rag_response(user_query: str) -> str:
     if not gemini_key:
@@ -68,7 +66,8 @@ def get_rag_response(user_query: str) -> str:
     except Exception as e:
         print(f"Vector search fallback to multi-keyword search: {e}")
         # 3. Fallback: search multiple keywords across all 48 subjects
-        keywords = [w for w in user_query.lower().split() if len(w) > 3]
+        stop_words = ["cual", "cuales", "como", "cuando", "donde", "porque", "para", "este", "esta", "estos", "estas", "son", "las", "los", "que", "del", "una", "uno"]
+        keywords = [w.lower().strip('?,.¿¡!') for w in user_query.split() if len(w) > 3 and w.lower() not in stop_words]
         if not keywords:
             keywords = ["quimica"]
 
@@ -110,17 +109,17 @@ def get_rag_response(user_query: str) -> str:
         for c in context_chunks
     ])
 
-    prompt = f"""Eres el Asistente Oficial para estudiantes de la Licenciatura en Qu\u00edmica de CUCEI (Universidad de Guadalajara - UdeG).
-Tienes acceso al PLAN DE ESTUDIOS COMPLETO DE LA LICENCIATURA EN QU\u00cdMICA DEL CUCEI, el cual incluye las 48 materias distribuidas en todas las \u00e1reas:
-- Qu\u00edmica General, Org\u00e1nica, Anal\u00edtica, Inorg\u00e1nica
-- Fisicoqu\u00edmica, Electroqu\u00edmica
-- Bioqu\u00edmica Estructural
-- Qu\u00edmica Ambiental, de Alimentos, Macromolecular, Pol\u00edmeros
-- Matem\u00e1ticas (C\u00e1lculo, \u00c1lgebra Lineal, EDO)
-- Todos los Laboratorios de cada \u00e1rea
-- Talleres de Soluci\u00f3n de Problemas (TSM)
+    prompt = f"""Eres el Asistente Oficial para estudiantes de la Licenciatura en Química de CUCEI (Universidad de Guadalajara - UdeG).
+Tienes acceso al PLAN DE ESTUDIOS COMPLETO DE LA LICENCIATURA EN QUÍMICA DEL CUCEI, el cual incluye las 48 materias distribuidas en todas las áreas:
+- Química General, Orgánica, Analítica, Inorgánica
+- Fisicoquímica, Electroquímica
+- Bioquímica Estructural
+- Química Ambiental, de Alimentos, Macromolecular, Polímeros
+- Matemáticas (Cálculo, Álgebra Lineal, EDO)
+- Todos los Laboratorios de cada área
+- Talleres de Solución de Problemas (TSM)
 
-Responde amablemente a la pregunta del estudiante utilizando la informaci\u00f3n oficial recuperada del plan de estudios.
+REGLA DE ORO ESTRICTA: SI LA INFORMACIÓN SOLICITADA NO SE ENCUENTRA EN EL CONTEXTO OFICIAL PROPORCIONADO ABAJO, DEBES RESPONDER "No cuento con esa información" O "Solo puedo responder con base en el plan de estudios proporcionado". BAJO NINGUNA CIRCUNSTANCIA DEBES INVENTAR NOMBRES DE MATERIAS O DATOS.
 
 CONTEXTO OFICIAL RECUPERADO DEL PLAN DE ESTUDIOS CUCEI:
 {context_text}
@@ -132,12 +131,12 @@ RESPUESTA (Amable, clara y profesional para Telegram):"""
 
     try:
         response = ai.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         return response.text
     except Exception as e:
-        return "\ud83d\udc4b \u00a1Hola! Recib\u00ed tu consulta. En este momento la API est\u00e1 reiniciando cuotas. Por favor intenta de nuevo en unos momentos."
+        return f"👋 ¡Hola! Recibí tu consulta. En este momento la API de Gemini está experimentando problemas. Por favor intenta de nuevo en unos momentos."
 
 
 class handler(BaseHTTPRequestHandler):
@@ -154,7 +153,7 @@ class handler(BaseHTTPRequestHandler):
 
             if text and chat_id:
                 if text.startswith("/start"):
-                    welcome = "\ud83d\udc4b \u00a1Hola! Soy el asistente oficial de la Licenciatura en Qu\u00edmica de CUCEI.\n\nPuedes preguntarme sobre cualquiera de las 48 materias del plan de estudios, cr\u00e9ditos, prerrequisitos, laboratorios, y las \u00e1reas de especializaci\u00f3n (Alimentos, Pol\u00edmeros, Ambiental, etc.)."
+                    welcome = "👋 ¡Hola! Soy el asistente oficial de la Licenciatura en Química de CUCEI.\n\nPuedes preguntarme sobre cualquiera de las 48 materias del plan de estudios, créditos, prerrequisitos, laboratorios, y las áreas de especialización (Alimentos, Polímeros, Ambiental, etc.)."
                     tg_status = send_telegram_message(chat_id, welcome)
                 else:
                     bot_reply = get_rag_response(text)
