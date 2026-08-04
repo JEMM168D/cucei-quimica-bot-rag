@@ -39,7 +39,7 @@ def get_rag_response(user_query: str) -> str:
             supabase.table("documents")
             .select("content, metadata")
             .eq("metadata->>source", "programa_estudios_licenciatura_quimica_cucei.md")
-            .limit(6)
+            .limit(30) # Fetch ALL chunks of the global summary (it has 21 chunks)
             .execute()
         )
         if summary_res.data:
@@ -78,7 +78,7 @@ def get_rag_response(user_query: str) -> str:
                     supabase.table("documents")
                     .select("content, metadata")
                     .ilike("content", f"%{kw}%")
-                    .limit(20)
+                    .limit(10)
                     .execute()
                 )
                 if res.data:
@@ -87,11 +87,11 @@ def get_rag_response(user_query: str) -> str:
                         if src not in seen_sources and src != "programa_estudios_licenciatura_quimica_cucei.md":
                             context_chunks.append(doc)
                             seen_sources.add(src)
-                            if len(context_chunks) >= 10:
+                            if len(context_chunks) >= 40:
                                 break
             except Exception as inner_e:
                 print(f"Keyword search error for '{kw}': {inner_e}")
-            if len(context_chunks) >= 10:
+            if len(context_chunks) >= 40:
                 break
 
     # Deduplicate by content
@@ -102,7 +102,7 @@ def get_rag_response(user_query: str) -> str:
         if content_key not in seen_content:
             seen_content.add(content_key)
             unique_chunks.append(c)
-    context_chunks = unique_chunks[:10]
+    context_chunks = unique_chunks # Removed the hard limit of 10! Let it use all retrieved chunks
 
     context_text = "\n\n".join([
         f"--- Fuente: {c.get('metadata', {}).get('source', '')} ---\n{c.get('content', '')}"
