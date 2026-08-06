@@ -43,7 +43,7 @@ def get_rag_response(user_query: str) -> str:
         
         rpc_res = supabase.rpc("match_documents", {
             "query_embedding": query_vector,
-            "match_count": 5,
+            "match_count": 40,
             "filter": {}
         }).execute()
         
@@ -53,7 +53,7 @@ def get_rag_response(user_query: str) -> str:
         # 2. Fallback to Supabase ILIKE keyword search
         keywords = [w for w in user_query.split() if len(w) > 3]
         query_word = keywords[0] if keywords else "quimica"
-        res = supabase.table("documents").select("content, metadata").ilike("content", f"%{query_word}%").limit(5).execute()
+        res = supabase.table("documents").select("content, metadata").ilike("content", f"%{query_word}%").limit(10).execute()
         context_chunks = res.data or []
 
     context_text = "\n\n".join([
@@ -74,7 +74,7 @@ RESPUESTA (Formato amable y bien estructurado para Telegram):"""
 
     try:
         response = ai.models.generate_content(
-            model="gemini-3.6-flash",
+            model="gemini-1.5-flash",
             contents=prompt
         )
         return response.text
